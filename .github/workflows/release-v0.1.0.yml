@@ -1,0 +1,86 @@
+name: Release v0.1.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-v0.1.0.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run quality checks
+        run: npm run check
+
+      - name: Build extension ZIP
+        run: npm run build
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > /tmp/release-notes.md <<'EOF'
+          ## Helium Live Translator v0.1.0
+
+          Helium / Chromium の現在のタブ音声を文字起こし・翻訳し、Webページ上へ字幕として表示する初回公開版です。
+
+          ### 主な機能
+
+          - タブ音声の取得と元音声の継続再生
+          - OpenAIによる音声文字起こしと翻訳
+          - 翻訳字幕と原文字幕の同時表示
+          - 音声区間のオーバーラップと重複字幕の自動除去
+          - 無音判定と処理キュー制御
+          - Shadow DOMによる字幕UIの分離
+          - 字幕位置、文字サイズ、固有名詞辞書の設定
+          - `Alt + Shift + L` による開始・停止
+          - Manifest V3 / Helium / Chromium 116以降に対応
+
+          ### 利用上の注意
+
+          - 利用者自身のOpenAI APIキーが必要です。
+          - OpenAI APIの利用料金が発生する場合があります。
+          - 現在は短い音声区間を順番に処理する準リアルタイム方式です。
+          - DRM保護コンテンツや一部のフルスクリーン表示では制限される場合があります。
+
+          ZIPを展開し、Heliumの拡張機能管理画面から「パッケージ化されていない拡張機能を読み込む」で導入してください。
+          EOF
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="v0.1.0"
+          TARGET="87f3e44b6510b340aaafec6a6a112143a8f6e189"
+          ASSET="dist/helium-live-translator-v0.1.0.zip"
+
+          test -f "$ASSET"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --clobber
+            gh release edit "$TAG" \
+              --title "Helium Live Translator v0.1.0" \
+              --notes-file /tmp/release-notes.md \
+              --latest
+          else
+            gh release create "$TAG" "$ASSET" \
+              --target "$TARGET" \
+              --title "Helium Live Translator v0.1.0" \
+              --notes-file /tmp/release-notes.md \
+              --latest
+          fi
