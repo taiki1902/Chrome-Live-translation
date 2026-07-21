@@ -27,6 +27,17 @@ jobs:
       - name: Restore and verify source archive
         shell: bash
         run: |
+          cat > /tmp/parts.sha256 <<'CHECKSUMS'
+          cec1c3844d1184684a2518b1e1e125573badfa1624a008a91959c674f7f82210  _bootstrap/part-00
+          8941ca3d4036a9fc4b9e63db65a52522c97704452af3051b16bb46c402d64004  _bootstrap/part-01
+          6d923ee6d1c58937b14c9ba65ef87b433ae461cac0851094e0de39aa05562aca  _bootstrap/part-02
+          6c6bd18bf57c47fee090f16fc4814902176674c771ec795097f8597171152ac7  _bootstrap/part-03
+          99fabd11fbc07c3d03ec35bc583db67b5d6fe4e561ab30586d7f107f4c47fcc8  _bootstrap/part-04
+          39f2e68834029268711795909467dbd5f94bad6d9c2a989643130453b0b78f64  _bootstrap/part-05
+          897069b9742492f4fbb3342db0954c04181fee80538301a5f6dd6bc4ae6b34e4  _bootstrap/part-06
+          cf2cbe8f73e275bcac259c6cc9ed264b4b2f7d3154dca91a5ace98235425ecdc  _bootstrap/part-07
+          CHECKSUMS
+          sha256sum --check /tmp/parts.sha256
           cat _bootstrap/part-* | base64 --decode > /tmp/helium-live-translator.zip
           echo "331702a3466ac60dc76120f70fbba24f9637a4eaf483d542ae508ff36b21960e  /tmp/helium-live-translator.zip" | sha256sum --check
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
