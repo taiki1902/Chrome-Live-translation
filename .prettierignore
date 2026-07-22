@@ -2,3 +2,5 @@ node_modules
 dist
 build
 package-lock.json
+scripts/run-live-translation-e2e.mjs
+.github/workflows/full-browser-e2e.yml
