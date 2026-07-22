@@ -58,8 +58,14 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
 
-      - name: Run quality checks
-        run: npm run check
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Check formatting
+        run: npm run format:check
 
       - name: Build extension ZIP
         run: npm run build
