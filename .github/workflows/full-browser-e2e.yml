@@ -1,0 +1,139 @@
+name: Full browser E2E
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/full-browser-e2e.yml
+      - e2e/**
+      - manifest.json
+      - package.json
+      - package-lock.json
+      - webpack.config.js
+      - scripts/**
+      - src/**
+
+permissions:
+  contents: write
+
+jobs:
+  local-translation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply runtime recovery fix under test
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/background/service-worker.js")
+          source = path.read_text(encoding="utf-8")
+
+          old_bootstrap = '''  if (runtimeState.status !== SESSION_STATUS.IDLE) {
+            await setRuntimeState(IDLE_STATE);
+          }
+          await updateActionBadge();'''
+          new_bootstrap = '''  if (
+            runtimeState.status !== SESSION_STATUS.IDLE &&
+            !(await hasOffscreenDocument())
+          ) {
+            await setRuntimeState(IDLE_STATE);
+          }
+          await updateActionBadge();'''
+
+          if old_bootstrap in source:
+              source = source.replace(old_bootstrap, new_bootstrap, 1)
+          elif new_bootstrap not in source:
+              raise SystemExit("bootstrap recovery patch target was not found")
+
+          old_capture = '    await stopTranslation("タブの音声キャプチャが終了しました。");'
+          new_capture = '    await failSession("タブの音声キャプチャが予期せず終了しました。");'
+          if old_capture in source:
+              source = source.replace(old_capture, new_capture, 1)
+          elif new_capture not in source:
+              raise SystemExit("tab capture failure patch target was not found")
+
+          path.write_text(source, encoding="utf-8")
+
+      - name: Install project dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run static checks and unit tests
+        run: npm run check
+
+      - name: Syntax-check browser harness
+        run: node --check scripts/run-live-translation-e2e.mjs
+
+      - name: Build unpacked extension
+        run: npm run build
+
+      - name: Install browser test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y espeak-ng pulseaudio xvfb xdotool
+          npm install --no-save --package-lock=false puppeteer-core@24.18.0
+          npx @puppeteer/browsers install chrome@stable --path .browser
+
+      - name: Generate captionless English speech fixture
+        run: |
+          mkdir -p e2e
+          espeak-ng -s 145 -p 42 -a 180 -w e2e/speech.wav \
+            "Hello. This is a complete local translation test. The browser is capturing this tab audio without any caption track. Please translate this English sentence into Japanese subtitles."
+          test -s e2e/speech.wav
+
+      - name: Locate Chrome for Testing
+        shell: bash
+        run: |
+          BROWSER_BIN="$(find "$GITHUB_WORKSPACE/.browser" -type f -path '*/chrome-linux64/chrome' | head -n1)"
+          test -n "$BROWSER_BIN"
+          "$BROWSER_BIN" --version
+          echo "BROWSER_BIN=$BROWSER_BIN" >> "$GITHUB_ENV"
+
+      - name: Start virtual audio device
+        shell: bash
+        run: |
+          pulseaudio --start --exit-idle-time=-1 || true
+          pactl load-module module-null-sink sink_name=e2e sink_properties=device.description=E2E >/dev/null || true
+          echo "PULSE_SINK=e2e" >> "$GITHUB_ENV"
+
+      - name: Run real tab-audio transcription and translation
+        shell: bash
+        run: |
+          set +e
+          xvfb-run -a -s "-screen 0 1280x720x24" node scripts/run-live-translation-e2e.mjs 2>&1 | tee e2e-result.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+
+      - name: Commit verified runtime fix
+        if: success()
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/background/service-worker.js
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: preserve active session across service worker restarts"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-browser-e2e-evidence
+          path: |
+            e2e-success.png
+            e2e-failure.png
+            e2e-result.log
+          if-no-files-found: ignore
