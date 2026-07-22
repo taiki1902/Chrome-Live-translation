@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Chromium/Helium extension for live tab-audio transcription and translated subtitles.",
+  "description": "Local-first Chromium/Helium extension for live tab-audio transcription and translated subtitles.",
   "scripts": {
     "lint": "eslint .",
     "test": "node --test",
@@ -12,14 +12,18 @@
     "check": "npm run lint && npm run test && npm run format:check",
     "build": "node scripts/package.mjs"
   },
+  "dependencies": {
+    "@huggingface/transformers": "4.2.0"
+  },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "archiver": "^7.0.0",
     "eslint": "^9.0.0",
     "globals": "^16.0.0",
-    "prettier": "^3.0.0"
+    "prettier": "^3.0.0",
+    "webpack": "^5.101.3"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

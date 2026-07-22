@@ -1,11 +1,14 @@
-# Privacy Policy
+# Privacy
 
-Helium Live Translator does not include analytics, advertising, telemetry, or a developer-operated backend.
+Helium Live Translator is local-first.
 
-- The OpenAI API key is stored in `chrome.storage.local` on the user's browser profile. Browser local storage is not a hardware-backed secret vault; anyone with access to the profile or extension debugging tools may be able to read it.
-- Audio from the user-selected tab is divided into short segments and sent directly from the extension to OpenAI's transcription API using the user's key.
-- Transcribed text is sent directly to OpenAI's Responses API for translation with `store: false`.
-- The extension developer does not receive audio, transcripts, translations, API keys, browsing history, or usage statistics.
-- No data is sold or shared by the extension developer.
+- The extension does not request or store an OpenAI API key.
+- Captured tab audio is processed in the extension's offscreen document on the user's device.
+- Recognized and translated subtitle text is not sent to a transcription or translation API.
+- Language, model, performance, and subtitle display settings are stored in `chrome.storage.local`.
+- Runtime state is stored temporarily in `chrome.storage.session`.
+- On first use, model files and ONNX runtime assets may be downloaded from Hugging Face and cached by the browser.
+- Model download requests reveal ordinary network metadata such as IP address and requested model file, but do not include captured audio or generated subtitle text.
+- Capture stops immediately when the user presses stop, closes the selected tab, or the browser ends the tab-capture stream.
 
-Users should review OpenAI's own API privacy and data-control terms before use. Stop translation to end capture immediately, and remove the extension to delete its local settings through the browser.
+The extension does not include analytics, advertising, account tracking, or a developer-operated backend.

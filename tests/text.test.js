@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   cleanSubtitle,
-  extractResponseText,
   isRestrictedUrl,
   trimTextOverlap,
 } from "../src/shared/text.js";
@@ -21,20 +20,6 @@ test("trimTextOverlap keeps unrelated text", () => {
   assert.equal(
     trimTextOverlap("first caption", "second caption"),
     "second caption",
-  );
-});
-
-test("extractResponseText reads Responses API message content", () => {
-  assert.equal(
-    extractResponseText({
-      output: [
-        {
-          type: "message",
-          content: [{ type: "output_text", text: "翻訳結果" }],
-        },
-      ],
-    }),
-    "翻訳結果",
   );
 });
 
