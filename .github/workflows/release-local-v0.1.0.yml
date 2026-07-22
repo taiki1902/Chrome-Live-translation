@@ -1,0 +1,88 @@
+name: Replace v0.1.0 release
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release-local-v0.1.0.yml
+      - .github/release-local-v0.1.0-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run quality checks
+        run: npm run check
+
+      - name: Build local extension ZIP
+        run: npm run build
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > /tmp/release-notes.md <<'EOF'
+          ## Helium Live Translator v0.1.0 — Local edition
+
+          OpenAI APIを使わず、再生中のタブ音声をPC内で文字起こし・翻訳して字幕表示するローカル版です。
+
+          ### 主な機能
+
+          - YouTube側の字幕トラックに依存せず、字幕がない動画・ライブ配信にも字幕を生成
+          - タブの実音声を`tabCapture`で取得
+          - Whisper ONNXを端末内で実行
+          - WebGPUを優先し、非対応環境ではWASM/CPUへフォールバック
+          - Chrome Translator APIを利用できる環境では内蔵翻訳を優先
+          - Heliumではローカル英日翻訳モデルへフォールバック
+          - 翻訳字幕と認識原文を同時表示
+          - フルスクリーン字幕、無音判定、音声区間の重複除去、遅延時のキュー制御
+          - OpenAI APIキー、開発者サーバー、音声アップロード不要
+
+          ### 初回利用時
+
+          音声認識・翻訳モデルをHugging Faceから取得してブラウザへキャッシュします。モデル取得後の音声、認識結果、翻訳文は文字起こし・翻訳APIへ送信されません。
+
+          ### 導入
+
+          添付ZIPを展開し、Heliumの`chrome://extensions/`でデベロッパーモードを有効にして「パッケージ化されていない拡張機能を読み込む」から展開フォルダーを選択してください。
+
+          ### 注意
+
+          - 初回モデル取得には数百MB以上の通信と空き容量が必要になる場合があります。
+          - 端末性能によって字幕遅延と精度が変わります。
+          - DRM保護コンテンツなど、ブラウザがタブ音声取得を拒否するページでは利用できない場合があります。
+          EOF
+
+      - name: Delete old release and publish local edition
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v0.1.0"
+          TARGET="e342a3b8868b47830ab6066fe4ddd01f15a9f8b8"
+          ASSET="dist/helium-live-translator-v0.1.0.zip"
+
+          test -f "$ASSET"
+          gh release delete "$TAG" --cleanup-tag --yes || true
+          git push origin ":refs/tags/$TAG" || true
+          gh release create "$TAG" "$ASSET" \
+            --target "$TARGET" \
+            --title "Helium Live Translator v0.1.0 — Local edition" \
+            --notes-file /tmp/release-notes.md \
+            --latest
