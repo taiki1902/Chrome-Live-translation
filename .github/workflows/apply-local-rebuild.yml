@@ -3,7 +3,6 @@ name: Apply local rebuild
 on:
   pull_request:
     paths:
-      - .bootstrap/local-v0.1.0/**
       - .github/workflows/apply-local-rebuild.yml
 
 permissions:
@@ -78,40 +77,11 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf node_modules dist build .bootstrap
-          rm -f .github/local-rebuild-trigger .github/workflows/apply-local-rebuild.yml
-          cat > .github/workflows/ci.yml <<'EOF'
-          name: CI
-
-          on:
-            push:
-              branches: [main]
-            pull_request:
-
-          permissions:
-            contents: read
-
-          jobs:
-            quality:
-              runs-on: ubuntu-latest
-              timeout-minutes: 20
-              steps:
-                - uses: actions/checkout@v4
-                - uses: actions/setup-node@v4
-                  with:
-                    node-version: 22
-                    cache: npm
-                - run: npm ci --ignore-scripts --no-audit --no-fund
-                - run: npm run check
-                - run: npm run build
-                - uses: actions/upload-artifact@v4
-                  with:
-                    name: helium-live-translator-extension
-                    path: dist/helium-live-translator-*.zip
-          EOF
+          rm -f .github/local-rebuild-trigger
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "chore: finalize local-first rebuild"
+            git commit -m "chore: remove rebuild bootstrap files"
             git push origin HEAD:${{ github.head_ref }}
           fi
