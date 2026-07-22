@@ -70,7 +70,12 @@ jobs:
           echo "PULSE_SINK=e2e" >> "$GITHUB_ENV"
 
       - name: Run real tab-audio transcription and translation
-        run: xvfb-run -a -s "-screen 0 1280x720x24" node scripts/run-live-translation-e2e.mjs
+        shell: bash
+        run: |
+          set +e
+          xvfb-run -a -s "-screen 0 1280x720x24" node scripts/run-live-translation-e2e.mjs 2>&1 | tee e2e-result.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
 
       - name: Upload browser evidence
         if: always()
@@ -80,4 +85,5 @@ jobs:
           path: |
             e2e-success.png
             e2e-failure.png
+            e2e-result.log
           if-no-files-found: ignore
