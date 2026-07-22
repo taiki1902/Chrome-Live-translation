@@ -1,0 +1,80 @@
+name: Full browser E2E
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/full-browser-e2e.yml
+      - e2e/**
+      - manifest.json
+      - package.json
+      - package-lock.json
+      - webpack.config.js
+      - scripts/**
+      - src/**
+
+permissions:
+  contents: read
+
+jobs:
+  local-translation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install project dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run static checks and unit tests
+        run: npm run check
+
+      - name: Build unpacked extension
+        run: npm run build
+
+      - name: Install browser test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y espeak-ng pulseaudio xvfb xdotool
+          npm install --no-save --package-lock=false puppeteer-core@24.18.0
+
+      - name: Generate captionless English speech fixture
+        run: |
+          mkdir -p e2e
+          espeak-ng -s 145 -p 42 -a 180 -w e2e/speech.wav \
+            "Hello. This is a complete local translation test. The browser is capturing this tab audio without any caption track. Please translate this English sentence into Japanese subtitles."
+          test -s e2e/speech.wav
+
+      - name: Locate Chrome
+        shell: bash
+        run: |
+          BROWSER_BIN="$(command -v google-chrome-stable || command -v google-chrome || command -v chromium-browser || command -v chromium)"
+          test -n "$BROWSER_BIN"
+          "$BROWSER_BIN" --version
+          echo "BROWSER_BIN=$BROWSER_BIN" >> "$GITHUB_ENV"
+
+      - name: Start virtual audio device
+        shell: bash
+        run: |
+          pulseaudio --start --exit-idle-time=-1 || true
+          pactl load-module module-null-sink sink_name=e2e sink_properties=device.description=E2E >/dev/null || true
+          echo "PULSE_SINK=e2e" >> "$GITHUB_ENV"
+
+      - name: Run real tab-audio transcription and translation
+        run: xvfb-run -a -s "-screen 0 1280x720x24" node e2e/run-live-translation.mjs
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-browser-e2e-evidence
+          path: |
+            e2e-success.png
+            e2e-failure.png
+          if-no-files-found: ignore
