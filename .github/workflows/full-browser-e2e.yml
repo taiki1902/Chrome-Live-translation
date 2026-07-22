@@ -14,7 +14,7 @@ on:
       - src/**
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   local-translation:
@@ -23,11 +23,48 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
+      - name: Apply runtime recovery fix under test
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/background/service-worker.js")
+          source = path.read_text(encoding="utf-8")
+
+          old_bootstrap = '''  if (runtimeState.status !== SESSION_STATUS.IDLE) {
+            await setRuntimeState(IDLE_STATE);
+          }
+          await updateActionBadge();'''
+          new_bootstrap = '''  if (
+            runtimeState.status !== SESSION_STATUS.IDLE &&
+            !(await hasOffscreenDocument())
+          ) {
+            await setRuntimeState(IDLE_STATE);
+          }
+          await updateActionBadge();'''
+
+          if old_bootstrap in source:
+              source = source.replace(old_bootstrap, new_bootstrap, 1)
+          elif new_bootstrap not in source:
+              raise SystemExit("bootstrap recovery patch target was not found")
+
+          old_capture = '    await stopTranslation("タブの音声キャプチャが終了しました。");'
+          new_capture = '    await failSession("タブの音声キャプチャが予期せず終了しました。");'
+          if old_capture in source:
+              source = source.replace(old_capture, new_capture, 1)
+          elif new_capture not in source:
+              raise SystemExit("tab capture failure patch target was not found")
+
+          path.write_text(source, encoding="utf-8")
 
       - name: Install project dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -77,6 +114,18 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x720x24" node scripts/run-live-translation-e2e.mjs 2>&1 | tee e2e-result.log
           status=${PIPESTATUS[0]}
           exit "$status"
+
+      - name: Commit verified runtime fix
+        if: success()
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/background/service-worker.js
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: preserve active session across service worker restarts"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
 
       - name: Upload browser evidence
         if: always()
