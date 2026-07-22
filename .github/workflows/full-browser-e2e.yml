@@ -67,7 +67,7 @@ jobs:
           echo "PULSE_SINK=e2e" >> "$GITHUB_ENV"
 
       - name: Run real tab-audio transcription and translation
-        run: xvfb-run -a -s "-screen 0 1280x720x24" node e2e/run-live-translation.mjs
+        run: xvfb-run -a -s "-screen 0 1280x720x24" node scripts/run-live-translation-e2e.mjs
 
       - name: Upload browser evidence
         if: always()
