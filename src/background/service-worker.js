@@ -21,6 +21,7 @@ const IDLE_STATE = Object.freeze({
   tabOrigin: "",
   startedAt: null,
   captionCount: 0,
+  modelStatus: "",
   lastError: "",
 });
 
@@ -62,7 +63,10 @@ chrome.commands.onCommand.addListener(async (command) => {
   if (command !== "toggle-translation") return;
 
   try {
-    if (runtimeState.status === SESSION_STATUS.RUNNING) {
+    if (
+      runtimeState.status === SESSION_STATUS.RUNNING ||
+      runtimeState.status === SESSION_STATUS.STARTING
+    ) {
       await stopTranslation("キーボードショートカットで停止しました。");
       return;
     }
@@ -87,7 +91,9 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (
     runtimeState.tabId !== tabId ||
-    runtimeState.status !== SESSION_STATUS.RUNNING
+    ![SESSION_STATUS.STARTING, SESSION_STATUS.RUNNING].includes(
+      runtimeState.status,
+    )
   ) {
     return;
   }
@@ -115,8 +121,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
     });
     await sendToContent(tabId, {
       type: MESSAGE_TYPES.CONTENT_STATUS,
-      status: "running",
-      message: "翻訳字幕を継続しています",
+      status:
+        runtimeState.status === SESSION_STATUS.RUNNING ? "running" : "starting",
+      message: runtimeState.modelStatus || "ローカル字幕を準備しています…",
     });
   }
 });
@@ -125,7 +132,9 @@ chrome.tabCapture.onStatusChanged.addListener(async (info) => {
   if (
     runtimeState.tabId === info.tabId &&
     info.status === "stopped" &&
-    runtimeState.status === SESSION_STATUS.RUNNING
+    [SESSION_STATUS.STARTING, SESSION_STATUS.RUNNING].includes(
+      runtimeState.status,
+    )
   ) {
     await stopTranslation("タブの音声キャプチャが終了しました。");
   }
@@ -153,19 +162,15 @@ async function handleMessage(message, sender) {
 
     case MESSAGE_TYPES.SAVE_SETTINGS: {
       const current = await loadSettings();
-      const requested = normalizeSettings({
-        ...current,
-        ...message.settings,
-        apiKey:
-          message.settings?.apiKey === "••••••••••••"
-            ? current.apiKey
-            : message.settings?.apiKey,
-      });
-      const settings = await saveSettings(requested);
+      const settings = await saveSettings(
+        normalizeSettings({ ...current, ...message.settings }),
+      );
 
       if (
         runtimeState.tabId &&
-        runtimeState.status === SESSION_STATUS.RUNNING
+        [SESSION_STATUS.STARTING, SESSION_STATUS.RUNNING].includes(
+          runtimeState.status,
+        )
       ) {
         await sendToContent(runtimeState.tabId, {
           type: MESSAGE_TYPES.CONTENT_CONFIGURE,
@@ -187,6 +192,9 @@ async function handleMessage(message, sender) {
 
     case MESSAGE_TYPES.OFFSCREEN_CAPTION:
       return handleCaption(message.payload);
+
+    case MESSAGE_TYPES.OFFSCREEN_PROGRESS:
+      return handleProgress(message.payload);
 
     case MESSAGE_TYPES.OFFSCREEN_ERROR:
       await failSession(
@@ -220,8 +228,6 @@ async function startTranslation({ tabId, requestedSettings = null }) {
     throw new Error("すでに別のタブを翻訳しています。先に停止してください。");
   }
 
-  // Call from the service worker so Chrome 116+ allows the resulting ID to be
-  // consumed by the extension's offscreen document. Invoke before any await.
   const streamIdPromise = chrome.tabCapture.getMediaStreamId({
     targetTabId: tabId,
   });
@@ -232,25 +238,16 @@ async function startTranslation({ tabId, requestedSettings = null }) {
     streamIdPromise,
     offscreenPromise,
   ]);
+
   if (!tab?.url || isRestrictedUrl(tab.url)) {
     throw new Error(
-      "このページでは拡張機能を実行できません。通常のWebページで使用してください。",
+      "このページでは実行できません。YouTubeなどの通常ページで使用してください。",
     );
   }
 
   const settings = requestedSettings
-    ? await saveSettings({
-        ...currentSettings,
-        ...requestedSettings,
-        apiKey:
-          requestedSettings.apiKey === "••••••••••••"
-            ? currentSettings.apiKey
-            : requestedSettings.apiKey,
-      })
+    ? await saveSettings({ ...currentSettings, ...requestedSettings })
     : currentSettings;
-  if (!settings.apiKey || settings.apiKey.length < 20) {
-    throw new Error("設定画面で有効なOpenAI APIキーを入力してください。");
-  }
 
   if (runtimeState.status === SESSION_STATUS.ERROR) {
     await setRuntimeState(IDLE_STATE);
@@ -265,17 +262,8 @@ async function startTranslation({ tabId, requestedSettings = null }) {
     tabTitle: tab.title ?? "",
     tabOrigin: new URL(tab.url).origin,
     startedAt: Date.now(),
+    modelStatus: "タブ音声を接続しています…",
   });
-
-  const response = await chrome.runtime.sendMessage({
-    target: TARGETS.OFFSCREEN,
-    type: MESSAGE_TYPES.OFFSCREEN_START,
-    payload: { sessionId, tabId, streamId, settings },
-  });
-
-  if (!response?.ok) {
-    throw new Error(response?.error ?? "音声処理を開始できませんでした。");
-  }
 
   await ensureContentScript(tabId);
   await sendToContent(tabId, {
@@ -285,21 +273,22 @@ async function startTranslation({ tabId, requestedSettings = null }) {
   await sendToContent(tabId, {
     type: MESSAGE_TYPES.CONTENT_STATUS,
     status: "starting",
-    message: "音声を接続しています…",
+    message: "タブ音声を接続しています…",
   });
 
-  await setRuntimeState({
-    ...runtimeState,
-    status: SESSION_STATUS.RUNNING,
-    lastError: "",
+  const response = await chrome.runtime.sendMessage({
+    target: TARGETS.OFFSCREEN,
+    type: MESSAGE_TYPES.OFFSCREEN_START,
+    payload: { sessionId, tabId, streamId, settings },
   });
+
+  if (!response?.ok) {
+    throw new Error(
+      response?.error ?? "ローカル音声処理を開始できませんでした。",
+    );
+  }
+
   await updateActionBadge();
-  await sendToContent(tabId, {
-    type: MESSAGE_TYPES.CONTENT_STATUS,
-    status: "running",
-    message: "翻訳字幕を開始しました",
-  });
-
   return { state: runtimeState };
 }
 
@@ -324,7 +313,6 @@ async function stopTranslation(reason) {
     }
 
     await finishStop(reason, tabId);
-    await closeOffscreenDocument();
   })().finally(() => {
     stopPromise = null;
   });
@@ -351,6 +339,7 @@ async function failSession(errorMessage) {
     ...runtimeState,
     status: SESSION_STATUS.ERROR,
     lastError: errorMessage,
+    modelStatus: "",
   });
   await updateActionBadge();
 
@@ -373,7 +362,34 @@ async function failSession(errorMessage) {
   } catch {
     // Best-effort cleanup.
   }
-  await closeOffscreenDocument();
+}
+
+async function handleProgress(payload) {
+  if (
+    !payload ||
+    payload.sessionId !== runtimeState.sessionId ||
+    payload.tabId !== runtimeState.tabId
+  ) {
+    return {};
+  }
+
+  const nextStatus = payload.ready
+    ? SESSION_STATUS.RUNNING
+    : SESSION_STATUS.STARTING;
+  await setRuntimeState({
+    ...runtimeState,
+    status: nextStatus,
+    modelStatus: payload.message ?? "",
+    lastError: "",
+  });
+  await updateActionBadge();
+
+  await sendToContent(payload.tabId, {
+    type: MESSAGE_TYPES.CONTENT_STATUS,
+    status: payload.ready ? "running" : "starting",
+    message: payload.message,
+  });
+  return {};
 }
 
 async function handleCaption(payload) {
@@ -429,7 +445,7 @@ async function ensureOffscreenDocument() {
     url: OFFSCREEN_DOCUMENT_PATH,
     reasons: ["USER_MEDIA"],
     justification:
-      "Capture the user-selected tab audio and send short segments for live transcription.",
+      "Capture the user-selected tab audio and run local speech recognition and translation.",
   });
 }
 
@@ -441,14 +457,6 @@ async function hasOffscreenDocument() {
   return contexts.length > 0;
 }
 
-async function closeOffscreenDocument() {
-  try {
-    if (await hasOffscreenDocument()) await chrome.offscreen.closeDocument();
-  } catch {
-    // Browser shutdown and extension reload can race cleanup.
-  }
-}
-
 async function setRuntimeState(nextState) {
   runtimeState = { ...IDLE_STATE, ...nextState };
   await chrome.storage.session.set({
@@ -458,16 +466,21 @@ async function setRuntimeState(nextState) {
 
 async function updateActionBadge() {
   const running = runtimeState.status === SESSION_STATUS.RUNNING;
+  const starting = runtimeState.status === SESSION_STATUS.STARTING;
   const error = runtimeState.status === SESSION_STATUS.ERROR;
-  await chrome.action.setBadgeText({ text: running ? "ON" : error ? "!" : "" });
+  await chrome.action.setBadgeText({
+    text: running ? "ON" : starting ? "…" : error ? "!" : "",
+  });
   await chrome.action.setBadgeBackgroundColor({
     color: error ? "#ef4444" : "#6d5dfc",
   });
   await chrome.action.setTitle({
     title: running
-      ? "Helium Live Translator — 翻訳中"
-      : error
-        ? `Helium Live Translator — ${runtimeState.lastError}`
-        : "Helium Live Translator",
+      ? "Helium Live Translator — ローカル翻訳中"
+      : starting
+        ? `Helium Live Translator — ${runtimeState.modelStatus || "準備中"}`
+        : error
+          ? `Helium Live Translator — ${runtimeState.lastError}`
+          : "Helium Live Translator",
   });
 }

@@ -88,24 +88,6 @@ export function cleanSubtitle(value = "") {
   return text.replace(/\s+/g, " ").trim();
 }
 
-export function extractResponseText(response) {
-  if (typeof response?.output_text === "string") {
-    return response.output_text;
-  }
-
-  const fragments = [];
-  for (const item of response?.output ?? []) {
-    if (item?.type !== "message") continue;
-    for (const content of item.content ?? []) {
-      if (content?.type === "output_text" && typeof content.text === "string") {
-        fragments.push(content.text);
-      }
-    }
-  }
-
-  return fragments.join("\n").trim();
-}
-
 export function createSessionId() {
   return crypto.randomUUID();
 }

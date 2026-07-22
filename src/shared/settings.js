@@ -1,13 +1,12 @@
 import { STORAGE_KEYS } from "./constants.js";
 
 export const DEFAULT_SETTINGS = Object.freeze({
-  apiKey: "",
   sourceLanguage: "auto",
   targetLanguage: "ja",
-  transcriptionModel: "gpt-4o-mini-transcribe",
-  translationModel: "gpt-5-mini",
-  segmentSeconds: 4,
-  overlapMilliseconds: 450,
+  modelSize: "base",
+  performanceMode: "auto",
+  segmentSeconds: 6,
+  overlapMilliseconds: 700,
   showOriginal: true,
   translationEnabled: true,
   fontSize: 27,
@@ -21,31 +20,32 @@ export const DEFAULT_SETTINGS = Object.freeze({
 });
 
 const ALLOWED_POSITIONS = new Set(["top", "bottom"]);
+const ALLOWED_MODEL_SIZES = new Set(["tiny", "base"]);
+const ALLOWED_PERFORMANCE_MODES = new Set(["auto", "webgpu", "wasm"]);
+const ALLOWED_TARGET_LANGUAGES = new Set(["ja", "en"]);
 
 export function normalizeSettings(value = {}) {
   const merged = { ...DEFAULT_SETTINGS, ...(value ?? {}) };
 
   return {
-    apiKey: typeof merged.apiKey === "string" ? merged.apiKey.trim() : "",
     sourceLanguage:
       typeof merged.sourceLanguage === "string"
         ? merged.sourceLanguage
         : "auto",
-    targetLanguage:
-      typeof merged.targetLanguage === "string" ? merged.targetLanguage : "ja",
-    transcriptionModel: sanitizeModel(
-      merged.transcriptionModel,
-      DEFAULT_SETTINGS.transcriptionModel,
-    ),
-    translationModel: sanitizeModel(
-      merged.translationModel,
-      DEFAULT_SETTINGS.translationModel,
-    ),
-    segmentSeconds: clampNumber(merged.segmentSeconds, 3, 10, 4),
+    targetLanguage: ALLOWED_TARGET_LANGUAGES.has(merged.targetLanguage)
+      ? merged.targetLanguage
+      : DEFAULT_SETTINGS.targetLanguage,
+    modelSize: ALLOWED_MODEL_SIZES.has(merged.modelSize)
+      ? merged.modelSize
+      : DEFAULT_SETTINGS.modelSize,
+    performanceMode: ALLOWED_PERFORMANCE_MODES.has(merged.performanceMode)
+      ? merged.performanceMode
+      : DEFAULT_SETTINGS.performanceMode,
+    segmentSeconds: clampNumber(merged.segmentSeconds, 4, 12, 6),
     overlapMilliseconds: clampNumber(
       merged.overlapMilliseconds,
       0,
-      900,
+      1_500,
       DEFAULT_SETTINGS.overlapMilliseconds,
     ),
     showOriginal: Boolean(merged.showOriginal),
@@ -98,13 +98,7 @@ export async function saveSettings(settings) {
 }
 
 export function publicSettings(settings) {
-  return { ...settings, apiKey: settings.apiKey ? "••••••••••••" : "" };
-}
-
-function sanitizeModel(value, fallback) {
-  if (typeof value !== "string") return fallback;
-  const model = value.trim();
-  return /^[a-zA-Z0-9._:-]{2,100}$/.test(model) ? model : fallback;
+  return { ...settings };
 }
 
 function clampNumber(value, min, max, fallback) {

@@ -1,9 +1,11 @@
 # Changelog
 
-## 0.1.0 - 2026-07-22
+## 0.1.0
 
-- Initial public release.
-- Tab-audio capture through Manifest V3 offscreen documents.
-- Overlapped audio segmentation, silence gating, OpenAI transcription and translation.
-- Shadow DOM subtitle overlay with fullscreen-container support.
-- Local settings, keyboard shortcut, tests, CI, packaging and privacy documentation.
+- Rebuilt as a local-first extension with no OpenAI API dependency.
+- Added Whisper ONNX speech recognition through Transformers.js.
+- Added WebGPU acceleration with WASM/CPU fallback.
+- Added Chrome Translator API support with local OPUS-MT fallback.
+- Added independent subtitles for YouTube videos and streams without caption tracks.
+- Added local model download progress and runtime status reporting.
+- Retained overlapping audio windows, silence gating, subtitle deduplication, fullscreen overlay support, and bounded processing queues.

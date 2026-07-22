@@ -535,3 +535,36 @@ footer a:hover {
     opacity: 0.4;
   }
 }
+
+.local-panel {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border-color: rgba(75, 224, 173, 0.18);
+  background: rgba(40, 151, 117, 0.07);
+}
+
+.local-panel b {
+  color: #c8f8e8;
+  font-size: 11px;
+}
+
+.local-panel p {
+  margin: 3px 0 0;
+  color: #7f9d93;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.local-badge {
+  padding: 5px 7px;
+  border: 1px solid rgba(75, 224, 173, 0.25);
+  border-radius: 6px;
+  color: #75e2bc;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}

@@ -16,6 +16,7 @@ export const MESSAGE_TYPES = Object.freeze({
   OFFSCREEN_START: "offscreen:start",
   OFFSCREEN_STOP: "offscreen:stop",
   OFFSCREEN_CAPTION: "offscreen:caption",
+  OFFSCREEN_PROGRESS: "offscreen:progress",
   OFFSCREEN_ERROR: "offscreen:error",
   OFFSCREEN_STOPPED: "offscreen:stopped",
   CONTENT_PING: "content:ping",
@@ -34,7 +35,6 @@ export const SESSION_STATUS = Object.freeze({
 });
 
 export const OFFSCREEN_DOCUMENT_PATH = "src/offscreen/offscreen.html";
-export const API_BASE_URL = "https://api.openai.com/v1";
 
 export const RESTRICTED_URL_PREFIXES = Object.freeze([
   "chrome://",

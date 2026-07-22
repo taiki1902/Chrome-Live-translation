@@ -17,13 +17,23 @@
         </div>
         <div>
           <h1>Live Translator</h1>
-          <p>タブ音声を翻訳字幕へ</p>
+          <p>タブ音声を端末内で字幕化</p>
         </div>
         <div class="status-pill" id="statusPill" data-status="idle">
           <span class="status-dot"></span>
           <span id="statusLabel">停止中</span>
         </div>
       </header>
+
+      <section class="panel local-panel">
+        <div class="local-badge">LOCAL</div>
+        <div>
+          <b>APIキー・クラウド送信なし</b>
+          <p>
+            音声認識と翻訳はこのPCで実行します。初回のみモデルを取得します。
+          </p>
+        </div>
+      </section>
 
       <section class="panel compact-grid" aria-label="翻訳言語">
         <label>
@@ -48,48 +58,39 @@
         </label>
       </section>
 
-      <section class="panel api-panel">
-        <div class="field-heading">
-          <label for="apiKey">OpenAI APIキー</label>
-          <span>端末内だけに保存</span>
-        </div>
-        <div class="secret-field">
-          <input
-            id="apiKey"
-            type="password"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="sk-..."
-          />
-          <button id="toggleApiKey" type="button" aria-label="APIキーを表示">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
-              />
-              <circle cx="12" cy="12" r="2.8" />
-            </svg>
-          </button>
-        </div>
-        <p class="helper">
-          音声・字幕テキストは、あなたのAPIキーでOpenAIへ直接送信されます。
-        </p>
-      </section>
-
       <details class="panel advanced-panel">
         <summary>
-          <span>字幕・精度設定</span>
+          <span>モデル・字幕設定</span>
           <svg viewBox="0 0 20 20" aria-hidden="true">
             <path d="m6 8 4 4 4-4" />
           </svg>
         </summary>
 
         <div class="advanced-content">
+          <div class="two-column">
+            <label>
+              <span>音声認識モデル</span>
+              <select id="modelSize">
+                <option value="tiny">Tiny・軽量</option>
+                <option value="base">Base・高精度</option>
+              </select>
+            </label>
+            <label>
+              <span>実行デバイス</span>
+              <select id="performanceMode">
+                <option value="auto">自動</option>
+                <option value="webgpu">GPU優先</option>
+                <option value="wasm">CPU互換</option>
+              </select>
+            </label>
+          </div>
+
           <label class="range-field">
             <span
               ><b>音声区間</b
-              ><output id="segmentSecondsValue">4秒</output></span
+              ><output id="segmentSecondsValue">6秒</output></span
             >
-            <input id="segmentSeconds" type="range" min="3" max="10" step="1" />
+            <input id="segmentSeconds" type="range" min="4" max="12" step="1" />
           </label>
 
           <div class="two-column">
@@ -108,8 +109,8 @@
 
           <label class="switch-row">
             <span>
-              <b>原文も表示</b>
-              <small>翻訳字幕の下に文字起こしを表示</small>
+              <b>認識結果も表示</b>
+              <small>翻訳字幕の下に中間テキストを表示</small>
             </span>
             <input id="showOriginal" type="checkbox" role="switch" />
           </label>
@@ -117,31 +118,20 @@
           <label class="switch-row">
             <span>
               <b>無音区間をスキップ</b>
-              <small>API利用量を抑えるため無音を送信しない</small>
+              <small>処理待ちを減らし、端末負荷を抑えます</small>
             </span>
             <input id="silenceGate" type="checkbox" role="switch" />
           </label>
 
           <label>
-            <span>固有名詞・専門語</span>
+            <span>字幕置換辞書</span>
             <textarea
               id="customVocabulary"
               rows="2"
               maxlength="800"
-              placeholder="例: Zenless Zone Zero, 星見雅, RainStella"
+              placeholder="例: Zenless Zone Zero=ゼンレスゾーンゼロ"
             ></textarea>
           </label>
-
-          <div class="two-column models">
-            <label>
-              <span>文字起こしモデル</span>
-              <input id="transcriptionModel" type="text" spellcheck="false" />
-            </label>
-            <label>
-              <span>翻訳モデル</span>
-              <input id="translationModel" type="text" spellcheck="false" />
-            </label>
-          </div>
         </div>
       </details>
 
@@ -161,8 +151,8 @@
 
       <footer>
         <span
-          >ショートカット <kbd>Alt</kbd><span>+</span><kbd>Shift</kbd
-          ><span>+</span><kbd>L</kbd></span
+          ><kbd>Alt</kbd><span>+</span><kbd>Shift</kbd><span>+</span
+          ><kbd>L</kbd></span
         >
         <a
           href="https://github.com/taiki1902/Chrome-Live-translation"

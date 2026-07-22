@@ -1,13 +1,9 @@
 import { MESSAGE_TYPES, SESSION_STATUS } from "../shared/constants.js";
 import { LANGUAGES } from "../shared/languages.js";
-import { DEFAULT_SETTINGS } from "../shared/settings.js";
-
-const MASKED_KEY = "••••••••••••";
 
 const elements = {};
 let activeTab = null;
 let state = { status: SESSION_STATUS.IDLE };
-let hasStoredApiKey = false;
 
 await initialize();
 
@@ -27,8 +23,8 @@ function cacheElements() {
     "sourceLanguage",
     "targetLanguage",
     "swapLanguages",
-    "apiKey",
-    "toggleApiKey",
+    "modelSize",
+    "performanceMode",
     "segmentSeconds",
     "segmentSecondsValue",
     "position",
@@ -36,8 +32,6 @@ function cacheElements() {
     "showOriginal",
     "silenceGate",
     "customVocabulary",
-    "transcriptionModel",
-    "translationModel",
     "message",
     "saveButton",
     "toggleButton",
@@ -50,49 +44,53 @@ function cacheElements() {
 
 function populateLanguages() {
   for (const language of LANGUAGES) {
-    elements.sourceLanguage.add(new Option(language.label, language.code));
-    if (language.code !== "auto") {
-      elements.targetLanguage.add(new Option(language.label, language.code));
-    }
+    const sourceOption = document.createElement("option");
+    sourceOption.value = language.code;
+    sourceOption.textContent = language.label;
+    elements.sourceLanguage.append(sourceOption);
+  }
+
+  for (const language of LANGUAGES.filter(({ code }) =>
+    ["ja", "en"].includes(code),
+  )) {
+    const targetOption = document.createElement("option");
+    targetOption.value = language.code;
+    targetOption.textContent = language.label;
+    elements.targetLanguage.append(targetOption);
   }
 }
 
 function bindEvents() {
-  elements.segmentSeconds.addEventListener("input", updateSegmentLabel);
   elements.saveButton.addEventListener("click", saveFromForm);
   elements.toggleButton.addEventListener("click", toggleTranslation);
   elements.swapLanguages.addEventListener("click", swapLanguages);
-  elements.toggleApiKey.addEventListener("click", toggleApiKeyVisibility);
+  elements.segmentSeconds.addEventListener("input", updateSegmentLabel);
 }
 
 async function refreshState() {
-  const response = await chrome.runtime.sendMessage({
-    type: MESSAGE_TYPES.GET_STATE,
-  });
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.GET_STATE,
+    });
+    if (!response?.ok)
+      throw new Error(response?.error ?? "状態を取得できませんでした。");
 
-  if (!response?.ok) {
-    showMessage(response?.error ?? "状態を取得できませんでした。", "error");
-    return;
+    state = response.state;
+    applySettings(response.settings);
+    renderState();
+  } catch (error) {
+    showMessage(error.message, "error");
   }
-
-  state = response.state;
-  applySettings(response.settings ?? DEFAULT_SETTINGS);
-  renderState();
 }
 
 function applySettings(settings) {
-  hasStoredApiKey = settings.apiKey === MASKED_KEY;
-  elements.apiKey.value = "";
-  elements.apiKey.placeholder = hasStoredApiKey
-    ? "APIキーは保存済み"
-    : "sk-...";
   elements.sourceLanguage.value = settings.sourceLanguage;
   elements.targetLanguage.value = settings.targetLanguage;
-  elements.transcriptionModel.value = settings.transcriptionModel;
-  elements.translationModel.value = settings.translationModel;
-  elements.segmentSeconds.value = String(settings.segmentSeconds);
+  elements.modelSize.value = settings.modelSize;
+  elements.performanceMode.value = settings.performanceMode;
+  elements.segmentSeconds.value = settings.segmentSeconds;
   elements.position.value = settings.position;
-  elements.fontSize.value = String(settings.fontSize);
+  elements.fontSize.value = settings.fontSize;
   elements.showOriginal.checked = settings.showOriginal;
   elements.silenceGate.checked = settings.silenceGate;
   elements.customVocabulary.value = settings.customVocabulary;
@@ -100,13 +98,11 @@ function applySettings(settings) {
 }
 
 function collectSettings() {
-  const typedApiKey = elements.apiKey.value.trim();
   return {
-    apiKey: typedApiKey || (hasStoredApiKey ? MASKED_KEY : ""),
     sourceLanguage: elements.sourceLanguage.value,
     targetLanguage: elements.targetLanguage.value,
-    transcriptionModel: elements.transcriptionModel.value.trim(),
-    translationModel: elements.translationModel.value.trim(),
+    modelSize: elements.modelSize.value,
+    performanceMode: elements.performanceMode.value,
     segmentSeconds: Number(elements.segmentSeconds.value),
     position: elements.position.value,
     fontSize: Number(elements.fontSize.value),
@@ -125,11 +121,6 @@ async function saveFromForm() {
     });
     if (!response?.ok)
       throw new Error(response?.error ?? "設定を保存できませんでした。");
-    hasStoredApiKey = Boolean(response.settings.apiKey);
-    elements.apiKey.value = "";
-    elements.apiKey.placeholder = hasStoredApiKey
-      ? "APIキーは保存済み"
-      : "sk-...";
     showMessage("設定を保存しました。", "success");
   } catch (error) {
     showMessage(error.message, "error");
@@ -169,10 +160,11 @@ async function startTranslation() {
       throw new Error(response?.error ?? "翻訳を開始できませんでした。");
 
     state = response.state;
-    hasStoredApiKey = true;
-    elements.apiKey.value = "";
-    elements.apiKey.placeholder = "APIキーは保存済み";
-    showMessage("翻訳字幕を開始しました。", "success");
+    showMessage(
+      response.state.modelStatus ||
+        "初回はローカルモデルの取得に時間がかかる場合があります。",
+      "success",
+    );
     renderState();
   } catch (error) {
     showMessage(humanizeCaptureError(error), "error");
@@ -193,7 +185,7 @@ async function stopTranslation() {
     if (!response?.ok)
       throw new Error(response?.error ?? "停止できませんでした。");
     state = response.state;
-    showMessage("翻訳字幕を停止しました。", "success");
+    showMessage("ローカル翻訳字幕を停止しました。", "success");
     renderState();
   } catch (error) {
     showMessage(error.message, "error");
@@ -208,7 +200,7 @@ function renderState() {
 
   const labels = {
     [SESSION_STATUS.IDLE]: "停止中",
-    [SESSION_STATUS.STARTING]: "接続中",
+    [SESSION_STATUS.STARTING]: "準備中",
     [SESSION_STATUS.RUNNING]: "翻訳中",
     [SESSION_STATUS.STOPPING]: "停止中",
     [SESSION_STATUS.ERROR]: "エラー",
@@ -228,6 +220,8 @@ function renderState() {
 
   if (status === SESSION_STATUS.ERROR && state.lastError) {
     showMessage(state.lastError, "error");
+  } else if (state.modelStatus) {
+    showMessage(state.modelStatus);
   }
 }
 
@@ -243,22 +237,17 @@ function updateSegmentLabel() {
 function swapLanguages() {
   const source = elements.sourceLanguage.value;
   const target = elements.targetLanguage.value;
+
   if (source === "auto") {
     elements.sourceLanguage.value = target;
-    elements.targetLanguage.value = "ja";
-  } else {
+    elements.targetLanguage.value = target === "ja" ? "en" : "ja";
+    return;
+  }
+
+  if (["ja", "en"].includes(source)) {
     elements.sourceLanguage.value = target;
     elements.targetLanguage.value = source;
   }
-}
-
-function toggleApiKeyVisibility() {
-  const hidden = elements.apiKey.type === "password";
-  elements.apiKey.type = hidden ? "text" : "password";
-  elements.toggleApiKey.setAttribute(
-    "aria-label",
-    hidden ? "APIキーを隠す" : "APIキーを表示",
-  );
 }
 
 function showMessage(message, type = "info") {
@@ -269,7 +258,7 @@ function showMessage(message, type = "info") {
 function humanizeCaptureError(error) {
   const message = error?.message ?? String(error);
   if (/activeTab|capture|invoked|gesture/i.test(message)) {
-    return "タブ音声を取得できませんでした。通常のWebページを開き、もう一度ボタンを押してください。";
+    return "タブ音声を取得できませんでした。YouTubeなどの通常ページで、もう一度ボタンを押してください。";
   }
   return message;
 }

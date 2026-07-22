@@ -3,7 +3,7 @@
   "name": "Helium Live Translator",
   "short_name": "Live Translator",
   "version": "0.1.0",
-  "description": "配信・動画タブの音声をリアルタイムに文字起こし・翻訳し、字幕として重ねて表示します。",
+  "description": "字幕のない動画や配信でも、タブ音声を端末内で文字起こし・翻訳して字幕表示します。",
   "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
@@ -12,7 +12,12 @@
     "storage",
     "tabCapture"
   ],
-  "host_permissions": ["https://api.openai.com/*"],
+  "host_permissions": [
+    "https://huggingface.co/*",
+    "https://*.huggingface.co/*",
+    "https://*.hf.co/*",
+    "https://*.xethub.hf.co/*"
+  ],
   "background": {
     "service_worker": "src/background/service-worker.js",
     "type": "module"
@@ -39,10 +44,10 @@
         "default": "Alt+Shift+L",
         "mac": "Alt+Shift+L"
       },
-      "description": "現在のタブで翻訳字幕を開始・停止"
+      "description": "現在のタブでローカル翻訳字幕を開始・停止"
     }
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   }
 }
