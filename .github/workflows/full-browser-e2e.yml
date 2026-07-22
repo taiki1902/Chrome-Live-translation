@@ -46,6 +46,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y espeak-ng pulseaudio xvfb xdotool
           npm install --no-save --package-lock=false puppeteer-core@24.18.0
+          npx @puppeteer/browsers install chrome@stable --path .browser
 
       - name: Generate captionless English speech fixture
         run: |
@@ -54,10 +55,10 @@ jobs:
             "Hello. This is a complete local translation test. The browser is capturing this tab audio without any caption track. Please translate this English sentence into Japanese subtitles."
           test -s e2e/speech.wav
 
-      - name: Locate Chrome
+      - name: Locate Chrome for Testing
         shell: bash
         run: |
-          BROWSER_BIN="$(command -v google-chrome-stable || command -v google-chrome || command -v chromium-browser || command -v chromium)"
+          BROWSER_BIN="$(find "$GITHUB_WORKSPACE/.browser" -type f -path '*/chrome-linux64/chrome' | head -n1)"
           test -n "$BROWSER_BIN"
           "$BROWSER_BIN" --version
           echo "BROWSER_BIN=$BROWSER_BIN" >> "$GITHUB_ENV"
