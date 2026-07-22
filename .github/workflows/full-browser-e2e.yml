@@ -35,6 +35,9 @@ jobs:
       - name: Run static checks and unit tests
         run: npm run check
 
+      - name: Syntax-check browser harness
+        run: node --check scripts/run-live-translation-e2e.mjs
+
       - name: Build unpacked extension
         run: npm run build
 
