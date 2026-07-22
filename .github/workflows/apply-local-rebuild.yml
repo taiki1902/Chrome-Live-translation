@@ -1,0 +1,64 @@
+name: Apply local rebuild
+
+on:
+  pull_request:
+    paths:
+      - .bootstrap/local-v0.1.0/**
+      - .github/workflows/apply-local-rebuild.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Reconstruct and verify source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .bootstrap/local-v0.1.0/part-* | base64 --decode > /tmp/source.tar.gz
+          echo "6f58d16006b3ebf96def3cce0c037752ed63bf56fbe6ebff6f567f54e54c179d  /tmp/source.tar.gz" | sha256sum -c -
+          mkdir /tmp/source
+          tar -xzf /tmp/source.tar.gz -C /tmp/source
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/workflows/' \
+            --exclude='.bootstrap/' \
+            /tmp/source/ ./
+          rm -rf node_modules dist build src/shared/openai.js
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package.json
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run quality checks
+        run: npm run check
+
+      - name: Build extension ZIP
+        run: npm run build
+
+      - name: Commit validated local rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf node_modules dist build
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "feat: rebuild live translator with local models"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
