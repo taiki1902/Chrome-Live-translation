@@ -27,7 +27,8 @@ jobs:
       - name: Build candidate extension
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npm run check
+          npx eslint src scripts
+          npm test
           npm run build
 
       - name: Prepare browser and virtual audio
