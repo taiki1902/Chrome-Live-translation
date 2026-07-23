@@ -1,0 +1,138 @@
+name: Candidate Manual Chromium E2E
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - src/background/service-worker.js
+      - tests/e2e/full-audio-cdp.mjs
+      - .github/workflows/candidate-manual-chromium-e2e.yml
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build candidate extension
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx eslint src scripts
+          npm test
+          npm run build
+
+      - name: Prepare Chromium, audio and fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq espeak xvfb xdotool pulseaudio pulseaudio-utils
+
+          export XDG_RUNTIME_DIR="/tmp/hlt-runtime-${UID}"
+          export PULSE_SERVER="unix:${XDG_RUNTIME_DIR}/pulse/native"
+          mkdir -p "${XDG_RUNTIME_DIR}"
+          chmod 700 "${XDG_RUNTIME_DIR}"
+          echo "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}" >> "${GITHUB_ENV}"
+          echo "PULSE_SERVER=${PULSE_SERVER}" >> "${GITHUB_ENV}"
+
+          pulseaudio --kill >/dev/null 2>&1 || true
+          pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=file:/tmp/hlt-pulseaudio.log
+          for _ in $(seq 1 20); do
+            pactl info >/dev/null 2>&1 && break
+            sleep 0.25
+          done
+          pactl load-module module-null-sink sink_name=hlt_sink sink_properties=device.description=HLT_Test_Sink
+          pactl set-default-sink hlt_sink
+          pactl set-default-source hlt_sink.monitor
+          pactl info
+          pactl list short sinks
+
+          npm install --no-save --silent playwright@1.55.0
+          npx playwright install --with-deps chromium
+          node -e "const {chromium}=require('playwright'); console.log('CHROMIUM_EXECUTABLE='+chromium.executablePath())" >> "${GITHUB_ENV}"
+
+          mkdir -p /tmp/hlt-cdp-e2e
+          espeak -s 145 -w /tmp/hlt-cdp-e2e/speech.wav \
+            "Hello. This is a complete browser extension test. The live translator should recognize this English speech and translate it into Japanese subtitles. We are testing tab audio capture, local speech recognition, and local translation."
+          cat > /tmp/hlt-cdp-e2e/test.html <<'EOF'
+          <!doctype html>
+          <html>
+            <head>
+              <meta charset="utf-8">
+              <link rel="icon" href="data:,">
+              <title>Subtitle-less audio test</title>
+              <style>
+                body { background: #10131c; color: white; font-family: sans-serif; padding: 40px; }
+                h1 { font-size: 36px; }
+                p { font-size: 22px; }
+                audio { width: 700px; }
+              </style>
+            </head>
+            <body>
+              <h1>Subtitle-less audio test</h1>
+              <p>This page contains spoken audio but no caption or subtitle track.</p>
+              <audio id="audio" src="/speech.wav" controls loop autoplay></audio>
+              <script>audio.play().catch(() => undefined);</script>
+            </body>
+          </html>
+          EOF
+
+      - name: Run manually launched Chromium E2E
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m http.server 8123 --directory /tmp/hlt-cdp-e2e >/tmp/hlt-cdp-e2e/http.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          xvfb-run -a bash -lc '
+            set -euo pipefail
+            "${CHROMIUM_EXECUTABLE}" \
+              --user-data-dir=/tmp/hlt-cdp-e2e/profile \
+              --remote-debugging-port=9222 \
+              --no-first-run \
+              --no-default-browser-check \
+              --no-sandbox \
+              --disable-dev-shm-usage \
+              --autoplay-policy=no-user-gesture-required \
+              --disable-extensions-except="${GITHUB_WORKSPACE}/dist/extension" \
+              --load-extension="${GITHUB_WORKSPACE}/dist/extension" \
+              http://127.0.0.1:8123/test.html \
+              >/tmp/hlt-cdp-e2e/chromium.log 2>&1 &
+            CHROME_PID=$!
+            trap "kill ${CHROME_PID} 2>/dev/null || true" EXIT
+
+            for _ in $(seq 1 60); do
+              curl -fsS http://127.0.0.1:9222/json/version >/dev/null && break
+              sleep 0.5
+            done
+            curl -fsS http://127.0.0.1:9222/json/version
+
+            CDP_ENDPOINT=http://127.0.0.1:9222 \
+            E2E_OUTPUT_DIR=/tmp/hlt-cdp-e2e \
+            node tests/e2e/full-audio-cdp.mjs 2>&1 | tee /tmp/hlt-cdp-e2e/e2e.log
+          '
+
+      - name: Upload manual Chromium evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-manual-chromium-e2e
+          if-no-files-found: warn
+          path: |
+            /tmp/hlt-cdp-e2e/e2e.log
+            /tmp/hlt-cdp-e2e/http.log
+            /tmp/hlt-cdp-e2e/chromium.log
+            /tmp/hlt-cdp-e2e/e2e-result.png
+            /tmp/hlt-pulseaudio.log
+            dist/helium-live-translator-*.zip
