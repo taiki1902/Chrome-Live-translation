@@ -228,15 +228,14 @@ async function startTranslation({ tabId, requestedSettings = null }) {
     throw new Error("すでに別のタブを翻訳しています。先に停止してください。");
   }
 
-  const streamIdPromise = chrome.tabCapture.getMediaStreamId({
-    targetTabId: tabId,
-  });
-  const offscreenPromise = ensureOffscreenDocument();
+  await ensureOffscreenDocument();
+
   const [tab, currentSettings, streamId] = await Promise.all([
     chrome.tabs.get(tabId),
     loadSettings(),
-    streamIdPromise,
-    offscreenPromise,
+    chrome.tabCapture.getMediaStreamId({
+      targetTabId: tabId,
+    }),
   ]);
 
   if (!tab?.url || isRestrictedUrl(tab.url)) {
