@@ -1,0 +1,73 @@
+name: Apply tab capture ordering fix
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-tab-capture-race-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply ordering fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/background/service-worker.js')
+          text = path.read_text(encoding='utf-8')
+          old = '''  const streamIdPromise = chrome.tabCapture.getMediaStreamId({
+              targetTabId: tabId,
+            });
+            const offscreenPromise = ensureOffscreenDocument();
+            const [tab, currentSettings, streamId] = await Promise.all([
+              chrome.tabs.get(tabId),
+              loadSettings(),
+              streamIdPromise,
+              offscreenPromise,
+            ]);'''
+          new = '''  await ensureOffscreenDocument();
+
+            const [tab, currentSettings, streamId] = await Promise.all([
+              chrome.tabs.get(tabId),
+              loadSettings(),
+              chrome.tabCapture.getMediaStreamId({
+                targetTabId: tabId,
+              }),
+            ]);'''
+          if old not in text:
+              raise SystemExit('Expected tab capture block was not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check
+      - run: npm run build
+
+      - name: Commit tested source fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/background/service-worker.js
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: create offscreen document before tab stream id"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
