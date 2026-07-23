@@ -1,0 +1,128 @@
+name: Apply compatible model dtypes
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-compatible-model-dtypes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Replace fragile q4/q8 model variants
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/offscreen/offscreen.js')
+          text = path.read_text(encoding='utf-8')
+
+          old_attempts = '''function inferenceAttempts(mode) {
+            if (mode === "webgpu") {
+              return [{ device: "webgpu", dtype: "q4" }, { device: "webgpu" }];
+            }
+            if (mode === "wasm") {
+              return [{ device: "wasm", dtype: "q8" }, { device: "wasm" }];
+            }
+
+            return navigator.gpu
+              ? [
+                  { device: "webgpu", dtype: "q4" },
+                  { device: "webgpu" },
+                  { device: "wasm", dtype: "q8" },
+                  { device: "wasm" },
+                ]
+              : [{ device: "wasm", dtype: "q8" }, { device: "wasm" }];
+          }'''
+          new_attempts = '''function inferenceAttempts(mode) {
+            if (mode === "webgpu") {
+              return [
+                { device: "webgpu", dtype: "fp16" },
+                { device: "webgpu", dtype: "fp32" },
+              ];
+            }
+            if (mode === "wasm") {
+              return [
+                { device: "wasm", dtype: "int8" },
+                { device: "wasm", dtype: "fp32" },
+              ];
+            }
+
+            return navigator.gpu
+              ? [
+                  { device: "webgpu", dtype: "fp16" },
+                  { device: "webgpu", dtype: "fp32" },
+                  { device: "wasm", dtype: "int8" },
+                  { device: "wasm", dtype: "fp32" },
+                ]
+              : [
+                  { device: "wasm", dtype: "int8" },
+                  { device: "wasm", dtype: "fp32" },
+                ];
+          }'''
+
+          old_translator = '''    modelPromise = pipeline("translation", LOCAL_TRANSLATION_MODEL, {
+              device,
+              ...(device === "webgpu" ? { dtype: "q4" } : { dtype: "q8" }),
+              progress_callback: createModelProgressCallback(activeSession, "翻訳"),
+            }).catch(async () =>
+              pipeline("translation", LOCAL_TRANSLATION_MODEL, {
+                device,
+                progress_callback: createModelProgressCallback(activeSession, "翻訳"),
+              }),
+            );'''
+          new_translator = '''    const preferredDtype = device === "webgpu" ? "fp16" : "int8";
+            modelPromise = pipeline("translation", LOCAL_TRANSLATION_MODEL, {
+              device,
+              dtype: preferredDtype,
+              progress_callback: createModelProgressCallback(activeSession, "翻訳"),
+            }).catch(async () =>
+              pipeline("translation", LOCAL_TRANSLATION_MODEL, {
+                device,
+                dtype: "fp32",
+                progress_callback: createModelProgressCallback(activeSession, "翻訳"),
+              }),
+            );'''
+
+          if old_attempts not in text:
+              raise SystemExit('Expected inferenceAttempts block was not found')
+          if old_translator not in text:
+              raise SystemExit('Expected translator dtype block was not found')
+
+          text = text.replace(old_attempts, new_attempts, 1)
+          text = text.replace(old_translator, new_translator, 1)
+          path.write_text(text, encoding='utf-8')
+
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run format
+      - run: npm run check
+      - run: npm run build
+
+      - name: Commit tested dtype fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/offscreen/offscreen.js
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: use compatible local model dtypes"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
