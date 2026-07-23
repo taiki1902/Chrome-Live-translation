@@ -29,85 +29,37 @@ jobs:
       - name: Replace fragile q4/q8 model variants
         shell: python
         run: |
+          import re
           from pathlib import Path
 
           path = Path('src/offscreen/offscreen.js')
           text = path.read_text(encoding='utf-8')
+          original = text
 
-          old_attempts = '''function inferenceAttempts(mode) {
-            if (mode === "webgpu") {
-              return [{ device: "webgpu", dtype: "q4" }, { device: "webgpu" }];
-            }
-            if (mode === "wasm") {
-              return [{ device: "wasm", dtype: "q8" }, { device: "wasm" }];
-            }
+          replacements = {
+              '{ device: "webgpu", dtype: "q4" }': '{ device: "webgpu", dtype: "fp16" }',
+              '{ device: "webgpu" }': '{ device: "webgpu", dtype: "fp32" }',
+              '{ device: "wasm", dtype: "q8" }': '{ device: "wasm", dtype: "int8" }',
+              '{ device: "wasm" }': '{ device: "wasm", dtype: "fp32" }',
+              '...(device === "webgpu" ? { dtype: "q4" } : { dtype: "q8" }),': 'dtype: device === "webgpu" ? "fp16" : "int8",',
+          }
+          for old, new in replacements.items():
+              text = text.replace(old, new)
 
-            return navigator.gpu
-              ? [
-                  { device: "webgpu", dtype: "q4" },
-                  { device: "webgpu" },
-                  { device: "wasm", dtype: "q8" },
-                  { device: "wasm" },
-                ]
-              : [{ device: "wasm", dtype: "q8" }, { device: "wasm" }];
-          }'''
-          new_attempts = '''function inferenceAttempts(mode) {
-            if (mode === "webgpu") {
-              return [
-                { device: "webgpu", dtype: "fp16" },
-                { device: "webgpu", dtype: "fp32" },
-              ];
-            }
-            if (mode === "wasm") {
-              return [
-                { device: "wasm", dtype: "int8" },
-                { device: "wasm", dtype: "fp32" },
-              ];
-            }
+          text, fallback_count = re.subn(
+              r'(\.catch\(async \(\) =>\s*\n\s*pipeline\("translation", LOCAL_TRANSLATION_MODEL, \{\s*\n\s*device,\s*\n)(\s*progress_callback:)',
+              r'\1        dtype: "fp32",\n\2',
+              text,
+              count=1,
+          )
 
-            return navigator.gpu
-              ? [
-                  { device: "webgpu", dtype: "fp16" },
-                  { device: "webgpu", dtype: "fp32" },
-                  { device: "wasm", dtype: "int8" },
-                  { device: "wasm", dtype: "fp32" },
-                ]
-              : [
-                  { device: "wasm", dtype: "int8" },
-                  { device: "wasm", dtype: "fp32" },
-                ];
-          }'''
+          if text == original:
+              raise SystemExit('No dtype replacements were applied')
+          if 'dtype: "q4"' in text or 'dtype: "q8"' in text:
+              raise SystemExit('Fragile q4/q8 dtype remains in offscreen.js')
+          if fallback_count != 1:
+              raise SystemExit(f'Expected one fp32 translator fallback, found {fallback_count}')
 
-          old_translator = '''    modelPromise = pipeline("translation", LOCAL_TRANSLATION_MODEL, {
-              device,
-              ...(device === "webgpu" ? { dtype: "q4" } : { dtype: "q8" }),
-              progress_callback: createModelProgressCallback(activeSession, "翻訳"),
-            }).catch(async () =>
-              pipeline("translation", LOCAL_TRANSLATION_MODEL, {
-                device,
-                progress_callback: createModelProgressCallback(activeSession, "翻訳"),
-              }),
-            );'''
-          new_translator = '''    const preferredDtype = device === "webgpu" ? "fp16" : "int8";
-            modelPromise = pipeline("translation", LOCAL_TRANSLATION_MODEL, {
-              device,
-              dtype: preferredDtype,
-              progress_callback: createModelProgressCallback(activeSession, "翻訳"),
-            }).catch(async () =>
-              pipeline("translation", LOCAL_TRANSLATION_MODEL, {
-                device,
-                dtype: "fp32",
-                progress_callback: createModelProgressCallback(activeSession, "翻訳"),
-              }),
-            );'''
-
-          if old_attempts not in text:
-              raise SystemExit('Expected inferenceAttempts block was not found')
-          if old_translator not in text:
-              raise SystemExit('Expected translator dtype block was not found')
-
-          text = text.replace(old_attempts, new_attempts, 1)
-          text = text.replace(old_translator, new_translator, 1)
           path.write_text(text, encoding='utf-8')
 
       - run: npm ci --ignore-scripts --no-audit --no-fund
