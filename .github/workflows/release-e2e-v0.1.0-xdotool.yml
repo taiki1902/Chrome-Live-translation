@@ -1,0 +1,274 @@
+name: Release v0.1.0 Real X11 E2E
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release-e2e-v0.1.0-xdotool.yml
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Prepare clean browser environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq espeak xvfb unzip xdotool
+          mkdir -p /tmp/hlt-e2e
+          cd /tmp/hlt-e2e
+          npm init -y >/dev/null
+          npm install --silent playwright@1.55.0
+          npx playwright install --with-deps chromium
+          curl -L --fail --retry 3 \
+            -o release.zip \
+            https://github.com/taiki1902/Chrome-Live-translation/releases/download/v0.1.0/helium-live-translator-v0.1.0.zip
+          unzip -q release.zip -d extension
+          echo "Release SHA-256: $(sha256sum release.zip | cut -d' ' -f1)"
+          node -e "const m=require('/tmp/hlt-e2e/extension/manifest.json'); if(m.version!=='0.1.0') process.exit(1); console.log(m.name,m.version,m.permissions,m.host_permissions)"
+
+      - name: Create subtitle-less speech fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/hlt-e2e
+          espeak -s 145 -w speech.wav \
+            "Hello. This is a complete browser extension test. The live translator should recognize this English speech and translate it into Japanese subtitles. We are testing tab audio capture, local speech recognition, and local translation."
+          cat > test.html <<'EOF'
+          <!doctype html>
+          <html>
+            <head>
+              <meta charset="utf-8">
+              <link rel="icon" href="data:,">
+              <title>Subtitle-less audio test</title>
+              <style>
+                body { background: #10131c; color: white; font-family: sans-serif; padding: 40px; }
+                h1 { font-size: 36px; }
+                p { font-size: 22px; }
+                audio { width: 700px; }
+              </style>
+            </head>
+            <body>
+              <h1>Subtitle-less audio test</h1>
+              <p>This page contains spoken audio but no captions or subtitle track.</p>
+              <audio id="audio" src="/speech.wav" controls loop autoplay></audio>
+              <script>audio.play().catch(() => undefined);</script>
+            </body>
+          </html>
+          EOF
+
+      - name: Write X11 browser E2E runner
+        shell: bash
+        run: |
+          cat > /tmp/hlt-e2e/e2e.mjs <<'EOF'
+          import { chromium } from 'playwright';
+          import fs from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+
+          const extensionPath = '/tmp/hlt-e2e/extension';
+          const profilePath = '/tmp/hlt-e2e/profile';
+          const log = (...values) => console.log(new Date().toISOString(), ...values);
+          const errors = [];
+
+          const context = await chromium.launchPersistentContext(profilePath, {
+            headless: false,
+            args: [
+              `--disable-extensions-except=${extensionPath}`,
+              `--load-extension=${extensionPath}`,
+              '--autoplay-policy=no-user-gesture-required',
+              '--no-sandbox',
+              '--disable-dev-shm-usage',
+              '--use-fake-ui-for-media-stream',
+            ],
+            ignoreDefaultArgs: ['--disable-extensions'],
+          });
+
+          context.on('weberror', (event) => {
+            const error = event.error();
+            const text = error?.stack || error?.message || String(error);
+            errors.push(text);
+            log('WEBERROR', text);
+          });
+
+          let worker = context.serviceWorkers()[0];
+          if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 30_000 });
+          worker.on('console', (message) => log('SW_CONSOLE', message.type(), message.text()));
+
+          const extensionId = new URL(worker.url()).host;
+          log('EXTENSION_ID', extensionId);
+          log('WORKER_URL', worker.url());
+          const runtimeManifest = await worker.evaluate(() => chrome.runtime.getManifest());
+          log('RUNTIME_MANIFEST', JSON.stringify({
+            name: runtimeManifest.name,
+            version: runtimeManifest.version,
+            permissions: runtimeManifest.permissions,
+            hostPermissions: runtimeManifest.host_permissions,
+          }));
+
+          const commands = await worker.evaluate(() => chrome.commands.getAll());
+          log('COMMANDS', JSON.stringify(commands));
+          const toggleCommand = commands.find((command) => command.name === 'toggle-translation');
+          if (toggleCommand?.shortcut !== 'Alt+Shift+L') {
+            throw new Error(`Unexpected shortcut registration: ${JSON.stringify(toggleCommand)}`);
+          }
+
+          const popup = await context.newPage();
+          popup.on('pageerror', (error) => errors.push(error.stack || error.message));
+          popup.on('console', (message) => {
+            if (message.type() === 'error') errors.push(message.text());
+            log('POPUP_CONSOLE', message.type(), message.text());
+          });
+          await popup.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+          await popup.waitForLoadState('domcontentloaded');
+          log('POPUP_TITLE', await popup.title());
+          log('POPUP_STATUS', await popup.locator('#statusLabel').textContent());
+          log('POPUP_BUTTON', await popup.locator('#toggleButtonLabel').textContent());
+          await popup.close();
+
+          const page = await context.newPage();
+          page.on('pageerror', (error) => errors.push(error.stack || error.message));
+          page.on('console', (message) => {
+            if (message.type() === 'error') errors.push(message.text());
+            log('PAGE_CONSOLE', message.type(), message.text());
+          });
+          await page.goto('http://127.0.0.1:8123/test.html');
+          await page.bringToFront();
+          await page.locator('#audio').evaluate((audio) => audio.play());
+          const audioState = await page.locator('#audio').evaluate((audio) => ({
+            paused: audio.paused,
+            duration: audio.duration,
+            currentTime: audio.currentTime,
+            readyState: audio.readyState,
+          }));
+          log('AUDIO_STATE', JSON.stringify(audioState));
+          if (audioState.paused || audioState.readyState < 2) throw new Error('Test audio did not start');
+
+          const settings = {
+            sourceLanguage: 'en',
+            targetLanguage: 'ja',
+            modelSize: 'tiny',
+            performanceMode: 'wasm',
+            segmentSeconds: 4,
+            overlapMilliseconds: 700,
+            showOriginal: true,
+            translationEnabled: true,
+            fontSize: 27,
+            backgroundOpacity: 0.76,
+            position: 'bottom',
+            maxCaptionRows: 3,
+            captionLifetimeSeconds: 30,
+            silenceGate: false,
+            silenceThreshold: 0.003,
+            customVocabulary: '',
+          };
+          await worker.evaluate(async (value) => chrome.storage.local.set({ settings: value }), settings);
+          log('SETTINGS_WRITTEN');
+
+          const readState = () => worker.evaluate(async () => {
+            const result = await chrome.storage.session.get('runtimeState');
+            return result.runtimeState || null;
+          });
+
+          const findBrowserWindow = () => {
+            const output = execFileSync('xdotool', [
+              'search', '--onlyvisible', '--name', 'Subtitle-less audio test',
+            ], { encoding: 'utf8' }).trim();
+            const ids = output.split(/\s+/).filter(Boolean);
+            if (!ids.length) throw new Error('Chromium window was not found through X11');
+            return ids.at(-1);
+          };
+
+          const sendBrowserShortcut = () => {
+            const windowId = findBrowserWindow();
+            log('X11_WINDOW', windowId, execFileSync('xdotool', ['getwindowname', windowId], { encoding: 'utf8' }).trim());
+            execFileSync('xdotool', ['windowfocus', '--sync', windowId]);
+            execFileSync('xdotool', ['key', '--window', windowId, '--clearmodifiers', 'alt+shift+l']);
+          };
+
+          sendBrowserShortcut();
+          log('X11_SHORTCUT_SENT', toggleCommand.shortcut);
+
+          const startDeadline = Date.now() + 30_000;
+          let state = null;
+          while (Date.now() < startDeadline) {
+            state = await readState();
+            if (state?.status !== 'idle') break;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          log('STATE_AFTER_REAL_SHORTCUT', JSON.stringify(state));
+          if (!state || state.status === 'idle') throw new Error('Real X11 shortcut did not start the extension');
+          if (state.status === 'error') throw new Error(`Capture start failed: ${state.lastError}`);
+
+          let previousState = '';
+          const captionDeadline = Date.now() + 18 * 60_000;
+          while (Date.now() < captionDeadline) {
+            state = await readState();
+            const serialized = JSON.stringify(state);
+            if (serialized !== previousState) {
+              log('STATE', serialized);
+              previousState = serialized;
+            }
+            if (state?.status === 'error') throw new Error(`Extension runtime error: ${state.lastError}`);
+            if (state?.captionCount > 0) break;
+            await new Promise((resolve) => setTimeout(resolve, 3_000));
+          }
+
+          if (!state?.captionCount) {
+            throw new Error(`No caption was produced before timeout. Final state: ${JSON.stringify(state)}`);
+          }
+
+          const overlayCount = await page.locator('#helium-live-translator-root').count();
+          log('OVERLAY_HOST_COUNT', overlayCount);
+          if (overlayCount !== 1) throw new Error('Subtitle overlay host was not injected');
+          if (errors.length) throw new Error(`Browser runtime errors: ${errors.join(' | ')}`);
+
+          await page.screenshot({ path: '/tmp/hlt-e2e/e2e-result.png', fullPage: true });
+          log('SCREENSHOT_SIZE', fs.statSync('/tmp/hlt-e2e/e2e-result.png').size);
+          log('E2E_PASS', JSON.stringify(state));
+
+          sendBrowserShortcut();
+          const stopDeadline = Date.now() + 15_000;
+          let stoppedState = await readState();
+          while (Date.now() < stopDeadline && stoppedState?.status !== 'idle') {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            stoppedState = await readState();
+          }
+          log('STOP_STATE', JSON.stringify(stoppedState));
+          if (stoppedState?.status !== 'idle') throw new Error('Extension did not return to idle after stop');
+
+          await context.close();
+          EOF
+
+      - name: Run release E2E with real X11 shortcut
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/hlt-e2e
+          python3 -m http.server 8123 --directory /tmp/hlt-e2e >http.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          xvfb-run -a node e2e.mjs 2>&1 | tee e2e.log
+
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-v0.1.0-real-x11-e2e
+          if-no-files-found: warn
+          path: |
+            /tmp/hlt-e2e/e2e.log
+            /tmp/hlt-e2e/http.log
+            /tmp/hlt-e2e/e2e-result.png
+            /tmp/hlt-e2e/release.zip
