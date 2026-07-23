@@ -63,8 +63,9 @@ jobs:
           path.write_text(text, encoding='utf-8')
 
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run format
-      - run: npm run check
+      - run: npx prettier --write src/offscreen/offscreen.js
+      - run: npx eslint src scripts
+      - run: npm test
       - run: npm run build
 
       - name: Commit tested dtype fix
