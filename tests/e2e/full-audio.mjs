@@ -19,7 +19,11 @@ const context = await chromium.launchPersistentContext(
       "--disable-dev-shm-usage",
       "--use-fake-ui-for-media-stream",
     ],
-    ignoreDefaultArgs: ["--disable-extensions"],
+    ignoreDefaultArgs: [
+      "--disable-extensions",
+      "--mute-audio",
+      "--enable-automation",
+    ],
   },
 );
 
