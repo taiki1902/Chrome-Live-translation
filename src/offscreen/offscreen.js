@@ -401,20 +401,29 @@ async function getTranscriber(activeSession) {
 
 function inferenceAttempts(mode) {
   if (mode === "webgpu") {
-    return [{ device: "webgpu", dtype: "q4" }, { device: "webgpu" }];
+    return [
+      { device: "webgpu", dtype: "fp16" },
+      { device: "webgpu", dtype: "fp32" },
+    ];
   }
   if (mode === "wasm") {
-    return [{ device: "wasm", dtype: "q8" }, { device: "wasm" }];
+    return [
+      { device: "wasm", dtype: "int8" },
+      { device: "wasm", dtype: "fp32" },
+    ];
   }
 
   return navigator.gpu
     ? [
-        { device: "webgpu", dtype: "q4" },
-        { device: "webgpu" },
-        { device: "wasm", dtype: "q8" },
-        { device: "wasm" },
+        { device: "webgpu", dtype: "fp16" },
+        { device: "webgpu", dtype: "fp32" },
+        { device: "wasm", dtype: "int8" },
+        { device: "wasm", dtype: "fp32" },
       ]
-    : [{ device: "wasm", dtype: "q8" }, { device: "wasm" }];
+    : [
+        { device: "wasm", dtype: "int8" },
+        { device: "wasm", dtype: "fp32" },
+      ];
 }
 
 async function getTranslator(activeSession, pair) {
@@ -428,11 +437,12 @@ async function getTranslator(activeSession, pair) {
       activeSession.modelDevice || (navigator.gpu ? "webgpu" : "wasm");
     modelPromise = pipeline("translation", LOCAL_TRANSLATION_MODEL, {
       device,
-      ...(device === "webgpu" ? { dtype: "q4" } : { dtype: "q8" }),
+      dtype: device === "webgpu" ? "fp16" : "int8",
       progress_callback: createModelProgressCallback(activeSession, "翻訳"),
     }).catch(async () =>
       pipeline("translation", LOCAL_TRANSLATION_MODEL, {
         device,
+        dtype: "fp32",
         progress_callback: createModelProgressCallback(activeSession, "翻訳"),
       }),
     );
